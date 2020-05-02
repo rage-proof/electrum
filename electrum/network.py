@@ -318,6 +318,10 @@ class Network(Logger, NetworkRetryManager[ServerAddr]):
         self._connecting = set()
         self.proxy = None
 
+        #set self-signed SSL certificate for client authentication
+        self.ssl_clientkey = self.config.get('ssl_clientkey', None)
+        self.ssl_clientcert = self.config.get('ssl_clientcert', None)           
+
         # Dump network messages (all interfaces).  Set at runtime from the console.
         self.debug = False
 

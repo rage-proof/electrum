@@ -356,10 +356,10 @@ class Interface(Logger):
         else:
             await self.save_certificate()
 
-    def _is_saved_ssl_cert_available(self):
-        if not os.path.exists(self.cert_path):
+    def _is_saved_ssl_cert_available(self, cert_path):
+        if not os.path.exists(cert_path):
             return False
-        with open(self.cert_path, 'r') as f:
+        with open(cert_path, 'r') as f:
             contents = f.read()
         if contents == '':  # CA signed
             return True
@@ -367,19 +367,19 @@ class Interface(Logger):
         try:
             b = pem.dePem(contents, 'CERTIFICATE')
         except SyntaxError as e:
-            self.logger.info(f"error parsing already saved cert: {e}")
+            self.logger.info(f"error parsing cert: {e}")
             raise ErrorParsingSSLCert(e) from e
         try:
             x = x509.X509(b)
         except Exception as e:
-            self.logger.info(f"error parsing already saved cert: {e}")
+            self.logger.info(f"error parsing cert: {e}")
             raise ErrorParsingSSLCert(e) from e
         try:
             x.check_date()
             return True
         except x509.CertificateError as e:
             self.logger.info(f"certificate has expired: {e}")
-            os.unlink(self.cert_path)  # delete pinned cert only in this case
+            os.unlink(cert_path)  # delete pinned cert only in this case
             return False
 
     async def _get_ssl_context(self):
@@ -389,7 +389,7 @@ class Interface(Logger):
 
         # see if we already have cert for this server; or get it for the first time
         ca_sslc = ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH, cafile=ca_path)
-        if not self._is_saved_ssl_cert_available():
+        if not self._is_saved_ssl_cert_available(self.cert_path):
             try:
                 await self._try_saving_ssl_cert_for_first_time(ca_sslc)
             except (OSError, ConnectError, aiorpcx.socks.SOCKSError) as e:
@@ -403,6 +403,16 @@ class Interface(Logger):
             # pinned self-signed cert
             sslc = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=self.cert_path)
             sslc.check_hostname = 0
+            
+        #new stuff
+        if self.network.ssl_clientcert and self.network.ssl_clientkey:
+            try:
+                if self._is_saved_ssl_cert_available(self.network.ssl_clientcert):     
+                    sslc.load_cert_chain(certfile=self.network.ssl_clientcert, keyfile=self.network.ssl_clientkey)
+                    self.logger.info(f'client certificate {self.network.ssl_clientcert} valid')
+            except ErrorParsingSSLCert as e:
+                self.logger.warning(f'client certificate {self.network.ssl_clientcert} invalid')
+                util.trigger_callback('client_cert_error')
         return sslc
 
     def handle_disconnect(func):
