@@ -183,7 +183,6 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         self.checking_accounts = False
         self.qr_window = None
         self.pluginsdialog = None
-        self.showing_client_cert_inval_error = False
         self.tl_windows = []
         Logger.__init__(self)
 
@@ -444,8 +443,6 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
             self.history_model.on_fee_histogram()
         elif event == 'ln_gossip_sync_progress':
             self.update_lightning_icon()
-        elif event == 'client_cert_error':
-            self.show_client_cert_inval_error()
         else:
             self.logger.info(f"unexpected network event: {event} {args}")
 
@@ -3122,10 +3119,4 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
                      "to see it, you need to broadcast it."))
             win.msg_box(QPixmap(icon_path("offline_tx.png")), None, _('Success'), msg)
             return True
-
-    def show_client_cert_inval_error(self):
-        self.showing_client_cert_inval_error = True
-        self.show_critical(title=_("Client Certificate invalid"),
-                           msg=_("The SSL certificate provided for authentication at the main server is not valid.") )
-        self.showing_client_cert_inval_error = False
         
