@@ -92,7 +92,7 @@ def show_transaction(tx: Transaction, *, parent: 'ElectrumWindow', desc=None, pr
 
 class BaseTxDialog(QDialog, MessageBoxMixin):
 
-    def __init__(self, *, parent: 'ElectrumWindow', desc, prompt_if_unsaved, finalized: bool, external_keypairs=None):
+    def __init__(self, *, parent: 'ElectrumWindow', desc, prompt_if_unsaved, finalized: bool, external_keypairs=None, payjoin=None):
         '''Transactions in the wallet will show their description.
         Pass desc to give a description for txs not yet in the wallet.
         '''
@@ -105,6 +105,12 @@ class BaseTxDialog(QDialog, MessageBoxMixin):
         self.config = parent.config
         self.wallet = parent.wallet
         self.prompt_if_unsaved = prompt_if_unsaved
+        if payjoin:
+            self.pj = payjoin['pj']
+            self.pjos = payjoin['pjos']
+            self.pj_available = True
+        else:
+            self.pj_available = False
         self.saved = False
         self.desc = desc
         self.setMinimumWidth(950)
@@ -207,6 +213,7 @@ class BaseTxDialog(QDialog, MessageBoxMixin):
         # e.g. the FX plugin.  If this happens during or after a long
         # sign operation the signatures are lost.
         self.tx = tx = copy.deepcopy(tx)
+        print('tx-diaog: set_tx', self.tx)#
         try:
             self.tx.deserialize()
         except BaseException as e:
@@ -219,12 +226,17 @@ class BaseTxDialog(QDialog, MessageBoxMixin):
 
     def do_broadcast(self):
         self.main_window.push_top_level_window(self)
-        try:
-            self.main_window.broadcast_transaction(self.tx)
-        finally:
-            self.main_window.pop_top_level_window(self)
+        if self.payjoin_cb.isChecked():
+            self.main_window.exchange_psbt_http(self._gettx_for_coinjoin())
+        else:
+            try:
+                self.main_window.broadcast_transaction(self.tx)
+            finally:
+                self.main_window.pop_top_level_window(self)
         self.saved = True
         self.update()
+
+    
 
     def closeEvent(self, event):
         if (self.prompt_if_unsaved and not self.saved
@@ -641,6 +653,12 @@ class BaseTxDialog(QDialog, MessageBoxMixin):
 
         self.block_height_label = TxDetailLabel()
         vbox_right.addWidget(self.block_height_label)
+
+        self.payjoin_cb = QCheckBox(_('PayJoin'))
+        self.payjoin_cb.setChecked(bool(self.config.get('use_payjoin', True)))
+        vbox_right.addWidget(self.payjoin_cb)
+        #visibility
+        
         vbox_right.addStretch(1)
         hbox_stats.addLayout(vbox_right, 50)
 
@@ -653,6 +671,8 @@ class BaseTxDialog(QDialog, MessageBoxMixin):
         # set visibility after parenting can be determined by Qt
         self.rbf_label.setVisible(self.finalized)
         self.rbf_cb.setVisible(not self.finalized)
+        self.payjoin_cb.setVisible(self.pj_available)
+        print('pj_available in dialog:', self.pj_available)#
         self.locktime_final_label.setVisible(self.finalized)
         self.locktime_setter_widget.setVisible(not self.finalized)
 
@@ -687,10 +707,11 @@ class TxDialog(BaseTxDialog):
 
 class PreviewTxDialog(BaseTxDialog, TxEditor):
 
-    def __init__(self, *, make_tx, external_keypairs, window: 'ElectrumWindow'):
+    def __init__(self, *, make_tx, external_keypairs, window: 'ElectrumWindow', payjoin):
         TxEditor.__init__(self, window=window, make_tx=make_tx, is_sweep=bool(external_keypairs))
         BaseTxDialog.__init__(self, parent=window, desc='', prompt_if_unsaved=False,
-                              finalized=False, external_keypairs=external_keypairs)
+                              finalized=False, external_keypairs=external_keypairs, payjoin=payjoin)
+        print('pj_available in Preview dialog: ', payjoin)#
         BlockingWaitingDialog(window, _("Preparing transaction..."),
                               lambda: self.update_tx(fallback_to_zero_fee=True))
         self.update()

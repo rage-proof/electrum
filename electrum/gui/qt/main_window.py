@@ -64,7 +64,7 @@ from electrum.util import (format_time,
 from electrum.invoices import PR_TYPE_ONCHAIN, PR_TYPE_LN, PR_DEFAULT_EXPIRATION_WHEN_CREATING, Invoice
 from electrum.invoices import PR_PAID, PR_FAILED, pr_expiration_values, LNInvoice, OnchainInvoice
 from electrum.transaction import (Transaction, PartialTxInput,
-                                  PartialTransaction, PartialTxOutput)
+                                  PartialTransaction, PartialTxOutput, PayjoinTransaction)
 from electrum.address_synchronizer import AddTransactionException
 from electrum.wallet import (Multisig_Wallet, CannotBumpFee, Abstract_Wallet,
                              sweep_preparations, InternalAddressCorruption)
@@ -80,7 +80,7 @@ from .exception_window import Exception_Hook
 from .amountedit import AmountEdit, BTCAmountEdit, FreezableLineEdit, FeerateEdit
 from .qrcodewidget import QRCodeWidget, QRDialog
 from .qrtextedit import ShowQRTextEdit, ScanQRTextEdit
-from .transaction_dialog import show_transaction
+from .transaction_dialog import show_transaction, PreviewTxDialog
 from .fee_slider import FeeSlider, FeeComboBox
 from .util import (read_QIcon, ColorScheme, text_dialog, icon_path, WaitingDialog,
                    WindowModalDialog, ChoicesLayout, HelpLabel, Buttons,
@@ -95,7 +95,6 @@ from .history_list import HistoryList, HistoryModel
 from .update_checker import UpdateCheck, UpdateCheckThread
 from .channels_list import ChannelsList
 from .confirm_tx_dialog import ConfirmTxDialog
-from .transaction_dialog import PreviewTxDialog
 
 if TYPE_CHECKING:
     from . import ElectrumGui
@@ -1566,6 +1565,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
 
     def do_pay(self):
         invoice = self.read_invoice()
+        print('main -invoice: ', invoice)#
         if not invoice:
             return
         self.wallet.save_invoice(invoice)
@@ -1585,7 +1585,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
             self.pay_lightning_invoice(invoice.invoice, amount_msat=invoice.get_amount_msat())
         elif invoice.type == PR_TYPE_ONCHAIN:
             assert isinstance(invoice, OnchainInvoice)
-            self.pay_onchain_dialog(self.get_coins(), invoice.outputs)
+            self.pay_onchain_dialog(self.get_coins(), invoice.outputs, payjoin=invoice.bip78_payjoin)
         else:
             raise Exception('unknown invoice type')
 
@@ -1605,6 +1605,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
 
     def pay_onchain_dialog(self, inputs: Sequence[PartialTxInput],
                            outputs: List[PartialTxOutput], *,
+                           payjoin=None,
                            external_keypairs=None) -> None:
         # trustedcoin requires this
         if run_hook('abort_send', self):
@@ -1632,7 +1633,8 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         # shortcut to advanced preview (after "enough funds" check!)
         if self.config.get('advanced_preview'):
             self.preview_tx_dialog(make_tx=make_tx,
-                                   external_keypairs=external_keypairs)
+                                   external_keypairs=external_keypairs,
+                                   payjoin=payjoin)
             return
 
         cancelled, is_send, password, tx = d.run()
@@ -1646,11 +1648,13 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
                                        external_keypairs=external_keypairs)
         else:
             self.preview_tx_dialog(make_tx=make_tx,
-                                   external_keypairs=external_keypairs)
+                                   external_keypairs=external_keypairs,
+                                   payjoin=payjoin)
 
-    def preview_tx_dialog(self, *, make_tx, external_keypairs=None):
+    def preview_tx_dialog(self, *, make_tx, external_keypairs=None, payjoin=None):
+        print('preview_tx_dialog: ', payjoin)#
         d = PreviewTxDialog(make_tx=make_tx, external_keypairs=external_keypairs,
-                            window=self)
+                            window=self, payjoin=payjoin)
         d.show()
 
     def broadcast_or_show(self, tx: Transaction):
@@ -1726,6 +1730,33 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
 
         WaitingDialog(self, _('Broadcasting transaction...'),
                       broadcast_thread, broadcast_done, self.on_error)
+        
+    def exchange_psbt_http(self, payjoin):
+        """ """
+        import requests, copy
+        assert payjoin.is_complete()
+        
+        print(payjoin.to_json())
+
+        print(payjoin.serialize_as_base64())       
+
+
+        url = 'https://testnet.demo.btcpayserver.org/BTC/pj'
+        payload = payjoin.serialize_as_base64()
+        headers = {'content-type': 'text/plain',
+                   'content-length': str(len(payload))
+                   }
+        print(headers)
+        
+        try:
+            r = requests.post(url, data=payload, headers=headers)
+        except:
+            pass
+        
+        print(payload)
+        print(r.status_code)
+        print(r.headers)
+        print(r.text)
 
     def mktx_for_open_channel(self, funding_sat):
         coins = self.get_coins(nonlocal_only=True)
@@ -1869,7 +1900,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         if not URI:
             return
         try:
-            out = util.parse_URI(URI, self.on_pr)
+            out = util.parse_bip21_uri(URI, self.on_pr)
         except InvalidBitcoinURI as e:
             self.show_error(_("Error parsing URI") + f":\n{e}")
             return
@@ -1895,7 +1926,21 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         if amount:
             self.amount_e.setAmount(amount)
             self.amount_e.textEdited.emit("")
+        self._set_payjoin_availability(self.payto_URI)
 
+    def _set_payjoin_availability(self, out):
+        """  """
+        pj = out.get('pj')
+        pjos = out.get('pjos')
+        print('pj in main:', pj)#
+        print('pjos in main:', pjos)#
+        if pj:
+            self.pj_available = True
+            self.pj = pj
+            self.pjos = pjos
+        else:
+            self.pj_available = False
+        print('pj_available in main:', self.pj_available)#
 
     def do_clear(self):
         self.max_button.setChecked(False)
@@ -1903,6 +1948,9 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         self.payto_URI = None
         self.payto_e.is_pr = False
         self.set_onchain(False)
+        self.pj_available = False
+        self.pj = None
+        self.pjos = None
         for e in [self.payto_e, self.message_e, self.amount_e]:
             e.setText('')
             e.setFrozen(False)

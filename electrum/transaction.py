@@ -1876,6 +1876,10 @@ class PartialTransaction(Transaction):
         raw_bytes = self.serialize_as_bytes()
         return base64.b64encode(raw_bytes).decode('ascii')
 
+    def serialize_as_base64(self, force_psbt = True) -> str:
+        raw_bytes = self.serialize_as_bytes(force_psbt = force_psbt)
+        return base64.b64encode(raw_bytes).decode('ascii')
+
     def update_signatures(self, signatures: Sequence[str]):
         """Add new signatures to a transaction
 
@@ -1982,6 +1986,31 @@ class PartialTransaction(Transaction):
             txin.witness = None
         assert not self.is_complete()
         self.invalidate_ser_cache()
+
+
+class PayjoinTransaction(PartialTransaction):
+
+    @classmethod
+    def from_tx(cls, tx: Transaction) -> 'PayjoinTransaction':
+        res = cls(None)
+        res._inputs = [PartialTxInput.from_txin(txin, strip_witness = False) for txin in tx.inputs()]
+        res._outputs = [PartialTxOutput.from_txout(txout) for txout in tx.outputs()]
+        res.version = tx.version
+        res.locktime = tx.locktime
+        return res
+
+    def serialize_as_base64(self, force_psbt = True) -> str:
+        raw_bytes = self.serialize_as_bytes(force_psbt = force_psbt)
+        return base64.b64encode(raw_bytes).decode('ascii')
+
+    def check_for_encrypted_connection(self):
+        pass
+
+    def create_original_psbt(self):
+        pass
+
+    def check_payjoin_proposal(self):
+        pass
 
 
 def pack_bip32_root_fingerprint_and_int_path(xfp: bytes, path: Sequence[int]) -> bytes:
