@@ -1737,8 +1737,21 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         assert payjoin.is_complete()
         
         print(payjoin.to_json())
+<<<<<<< Updated upstream
 
         print(payjoin.serialize_as_base64())       
+=======
+        print(payjoin.serialize_as_base64())
+
+        for txin in payjoin.inputs():
+            print(txin)
+            print(txin.utxo)
+            print(txin.utxo.outputs())
+            print
+            self.utxo.outputs()[self.prevout.out_idx]
+
+        
+>>>>>>> Stashed changes
 
 
         url = 'https://testnet.demo.btcpayserver.org/BTC/pj'
@@ -1747,7 +1760,11 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
                    'content-length': str(len(payload))
                    }
         print(headers)
+<<<<<<< Updated upstream
         
+=======
+        """
+>>>>>>> Stashed changes
         try:
             r = requests.post(url, data=payload, headers=headers)
         except:
@@ -1757,6 +1774,10 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         print(r.status_code)
         print(r.headers)
         print(r.text)
+<<<<<<< Updated upstream
+=======
+        """
+>>>>>>> Stashed changes
 
     def mktx_for_open_channel(self, funding_sat):
         coins = self.get_coins(nonlocal_only=True)
