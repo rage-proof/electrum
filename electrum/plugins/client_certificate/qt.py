@@ -72,11 +72,11 @@ class Plugin(BasePlugin):
         fbox.addRow(QLabel(_('SSL Key') + ':'),hbox2)
        
         def on_choose_cert():
-            path, __ = QFileDialog.getOpenFileName(window, "Select your certificate file", self.config.path)
+            path, __ = QFileDialog.getOpenFileName(window, "Select your certificate file", self.ssl_clientcert or self.config.path)
             if path:
                 cert_name_e.setText(path)
         def on_choose_key():
-            path, __ = QFileDialog.getOpenFileName(window, "Select your priate key file", self.config.path)
+            path, __ = QFileDialog.getOpenFileName(window, "Select your priate key file", self.ssl_clientkey or self.config.path)
             if path:
                 key_name_e.setText(path)
 
