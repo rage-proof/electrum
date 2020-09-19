@@ -1733,7 +1733,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         
     def exchange_psbt_http(self, payjoin):
         """ """
-        import requests, copy
+        import requests
         assert payjoin.is_complete()
         
         print(payjoin.to_json())
@@ -1742,23 +1742,34 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         for txin in payjoin.inputs():
             print(txin)
             print(txin.utxo)
-            print(txin.utxo.outputs())
-            print(txin.utxo.outputs()[txin.prevout.out_idx])
-            print('\n',txin.to_json())
-            print('\n',txin.to_json())
-            
+            print('\n',txin.witness_utxo)
+            print('\n', txin.to_json())
 
-        
+            if txin.utxo:
+                print(txin.utxo.outputs())
+                print(txin.prevout.out_idx)
+                print(txin.utxo.outputs()[txin.prevout.out_idx])
+
+                print()
+
+
+            print('\n',txin.utxo)
+            txin.convert_utxo_to_witness_utxo()
+            print('\n', txin.witness_utxo)
+            print('\n', txin.to_json())
+        print()
+        payjoin.convert_all_utxos_to_witness_utxos()
+        print(payjoin.serialize_as_base64())
+        print(payjoin.to_json())
+
 
         url = 'https://testnet.demo.btcpayserver.org/BTC/pj'
         payload = payjoin.serialize_as_base64()
         headers = {'content-type': 'text/plain',
                    'content-length': str(len(payload))
                    }
-        #print(headers)
+        print(headers)
 
-        
-        """
         try:
             r = requests.post(url, data=payload, headers=headers)
         except:
@@ -1768,7 +1779,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         print(r.status_code)
         print(r.headers)
         print(r.text)
-        """
+        
 
 
     def mktx_for_open_channel(self, funding_sat):

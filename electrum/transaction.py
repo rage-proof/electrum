@@ -1151,9 +1151,11 @@ class PartialTxInput(TxInput, PSBTSection):
 
     @utxo.setter
     def utxo(self, value: Optional[Transaction]):
-        self._utxo = value
-        self.validate_data()
-        self.ensure_there_is_only_one_utxo()
+        if value:
+            self._utxo = value
+            self.validate_data()
+            self._witness_utxo = None
+            self.ensure_there_is_only_one_utxo()
 
     @property
     def witness_utxo(self):
@@ -1161,9 +1163,11 @@ class PartialTxInput(TxInput, PSBTSection):
 
     @witness_utxo.setter
     def witness_utxo(self, value: Optional[TxOutput]):
-        self._witness_utxo = value
-        self.validate_data()
-        self.ensure_there_is_only_one_utxo()
+        if value:
+            self._witness_utxo = value
+            self.validate_data()
+            self._utxo = None
+            self.ensure_there_is_only_one_utxo()
 
     def to_json(self):
         d = super().to_json()
