@@ -45,7 +45,7 @@ from electrum.bitcoin import base_encode, NLOCKTIME_BLOCKHEIGHT_MAX
 from electrum.i18n import _
 from electrum.plugin import run_hook
 from electrum import simple_config
-from electrum.transaction import SerializationError, Transaction, PartialTransaction, PartialTxInput
+from electrum.transaction import SerializationError, Transaction, PartialTransaction, PartialTxInput, PayjoinTransaction
 from electrum.logging import get_logger
 
 from .util import (MessageBoxMixin, read_QIcon, Buttons, icon_path,
@@ -105,12 +105,10 @@ class BaseTxDialog(QDialog, MessageBoxMixin):
         self.config = parent.config
         self.wallet = parent.wallet
         self.prompt_if_unsaved = prompt_if_unsaved
-        if payjoin:
-            self.pj = payjoin['pj']
-            self.pjos = payjoin['pjos']
-            self.pj_available = True
-        else:
-            self.pj_available = False
+
+        self.payjoin = PayjoinTransaction(payjoin)
+        print(self.payjoin)#
+
         self.saved = False
         self.desc = desc
         self.setMinimumWidth(950)
@@ -224,15 +222,31 @@ class BaseTxDialog(QDialog, MessageBoxMixin):
         # note: this might fetch prev txs over the network.
         tx.add_info_from_wallet(self.wallet)
 
+
+
     def do_broadcast(self):
         self.main_window.push_top_level_window(self)
+
         if self.payjoin_cb.isChecked():
-            self.main_window.exchange_psbt_http(self._gettx_for_coinjoin())
-        else:
-            try:
-                self.main_window.broadcast_transaction(self.tx)
-            finally:
-                self.main_window.pop_top_level_window(self)
+            self.payjoin.set_tx(self.tx)
+            tx = self.payjoin.do_payjoin()
+            if tx is not None:
+                #self.set_tx(tx)
+                self.tx = copy.deepcopy(tx)
+                print('broadcast1: ', self.tx.to_json())#
+                print('broadcast1: ', self.tx.serialize_as_base64())#
+                self.sign()
+                print('external keyspairs', self.external_keypairs)
+                print('broadcast2: ', self.tx.to_json())#
+                print('broadcast2: ', self.tx.serialize_as_base64())#
+                print('broadcast2: ', self.tx._serialize_as_base64()) #
+                print('broadcast2: ', self.tx.is_complete())  #
+        """
+        try:
+            self.main_window.broadcast_transaction(self.tx)
+        finally:
+            self.main_window.pop_top_level_window(self)
+        """
         self.saved = True
         self.update()
 
@@ -671,8 +685,8 @@ class BaseTxDialog(QDialog, MessageBoxMixin):
         # set visibility after parenting can be determined by Qt
         self.rbf_label.setVisible(self.finalized)
         self.rbf_cb.setVisible(not self.finalized)
-        self.payjoin_cb.setVisible(self.pj_available)
-        print('pj_available in dialog:', self.pj_available)#
+        self.payjoin_cb.setVisible(self.payjoin.is_available())
+        print('pj_available in dialog:', self.payjoin.is_available())#
         self.locktime_final_label.setVisible(self.finalized)
         self.locktime_setter_widget.setVisible(not self.finalized)
 

@@ -38,6 +38,8 @@ from collections import defaultdict
 from enum import IntEnum
 import itertools
 import binascii
+import requests
+import copy
 
 from . import ecc, bitcoin, constants, segwit_addr, bip32
 from .bip32 import BIP32Node
@@ -1345,11 +1347,13 @@ class PartialTxInput(TxInput, PSBTSection):
         return None
 
     def is_complete(self) -> bool:
-        if self.script_sig is not None and self.witness is not None:
+        if self.script_sig is not None or self.witness is not None:
             return True
         if self.is_coinbase_input():
             return True
         if self.script_sig is not None and not Transaction.is_segwit_input(self):
+            return True
+        if self.witness is not None and Transaction.is_segwit_input(self):
             return True
         signatures = list(self.part_sigs.values())
         s = len(signatures)
@@ -1374,7 +1378,7 @@ class PartialTxInput(TxInput, PSBTSection):
             self.redeem_script = None
             self.witness_script = None
 
-        if self.script_sig is not None and self.witness is not None:
+        if self.script_sig is not None or self.witness is not None:
             clear_fields_when_finalized()
             return  # already finalized
         if self.is_complete():
@@ -1992,29 +1996,115 @@ class PartialTransaction(Transaction):
         self.invalidate_ser_cache()
 
 
-class PayjoinTransaction(PartialTransaction):
+class PayjoinTransaction():
 
-    @classmethod
-    def from_tx(cls, tx: Transaction) -> 'PayjoinTransaction':
-        res = cls(None)
-        res._inputs = [PartialTxInput.from_txin(txin, strip_witness = False) for txin in tx.inputs()]
-        res._outputs = [PartialTxOutput.from_txout(txout) for txout in tx.outputs()]
-        res.version = tx.version
-        res.locktime = tx.locktime
-        return res
+    def __init__(self, payjoin_link=None):
+        self._version = 1
+        self.pj = payjoin_link.get('pj') if payjoin_link else None
+        self.pjos = payjoin_link.get('pjos') if payjoin_link else None
 
-    def serialize_as_base64(self, force_psbt = True) -> str:
-        raw_bytes = self.serialize_as_bytes(force_psbt = force_psbt)
-        return base64.b64encode(raw_bytes).decode('ascii')
+        self.payjoin_original = None
+        self.pj_proposal_received = False
 
-    def check_for_encrypted_connection(self):
-        pass
 
-    def create_original_psbt(self):
-        pass
+    def is_available(self):
+        return self.pj is not None
 
-    def check_payjoin_proposal(self):
-        pass
+    def set_tx(self, tx: PartialTransaction) -> None:
+        if self.is_available():
+            self.tx = copy.deepcopy(tx)
+
+    def prepare_original_psbt(self):
+        assert not self.pj_proposal_received
+        assert self.tx.is_complete()
+        self.payjoin_original = copy.deepcopy(self.tx)
+        self.payjoin_original.prepare_for_export_for_coinjoin()
+        self.payjoin_original.convert_all_utxos_to_witness_utxos()
+
+    def do_payjoin(self):
+        self.prepare_original_psbt()
+        print('\noriginal psbt',self.payjoin_original.to_json())#
+        for i,txin in enumerate(self.payjoin_original.inputs()):#
+            print('\n txinputs:',i,txin.to_json()) #
+
+
+        if not self.exchange_payjoin_original():
+            return None
+        self.pj_proposal = PartialTransaction.from_raw_psbt(self.payjoin_proposal_b64)
+        self.pj_proposal_received  = True
+        if not self.validate_payjoin_proposal():
+            return None
+        return self.pj_proposal
+
+
+
+    def exchange_payjoin_original(self, url=None):
+        """ """
+        url = self.pj
+        payload = self.payjoin_original.serialize_as_base64()
+        headers = {'content-type': 'text/plain',
+                   'content-length': str(len(payload))
+                   }
+        print('header ',headers)#
+        try:
+            r = requests.post(url, data=payload, headers=headers)
+            print(r.status_code)#
+            print(r.text)#
+            if r.status_code==200:
+                self.payjoin_proposal_b64 = r.text
+                print(self.payjoin_proposal_b64)#
+            else:
+                _logger.debug(f"payjoin is flawed {r.text}")
+                return False
+        except Exception as e:
+            print(repr(e))#
+            return False
+        return True
+
+    @staticmethod
+    def validate_inputs_and_outputs(pj_original: PartialTransaction, pj_proposal: PartialTransaction) -> Optional[bool]:
+        for txin in pj_original.inputs():
+            # check if order is important
+            if not txin.prevout.to_str() in [x.prevout.to_str() for x in pj_proposal.inputs()]:
+                # list(payjoin_proposal.inputs()).prevout.to_str():
+                raise Exception(f"Inputs from the original payjoin missing in payjoin proposal.")
+        for txin in pj_proposal.inputs():
+            if not txin.is_complete() and not txin.prevout.to_str() in [x.prevout.to_str() for x in pj_original.inputs()]:
+                raise Exception(f"Newly added inputs are not signed.")
+
+        for txout in pj_original.outputs():
+            # check if order is important
+            if txout.is_mine and not txout.scriptpubkey.hex() in [x.scriptpubkey.hex() for x in pj_proposal.outputs()]:
+                raise Exception(f"Sender outputs from the original payjoin missing in payjoin proposal.")
+        for txout in pj_proposal.outputs():
+            if not txout.scriptpubkey.hex() in [x.scriptpubkey.hex() for x in pj_original.outputs()]:
+                raise Exception(f"Newly added outputs.")
+        return True
+
+
+    def validate_payjoin_proposal(self):
+
+        if not self.validate_inputs_and_outputs(self.payjoin_original, self.pj_proposal):
+            return False
+        """
+        if self.payjoin_original.get_fee() > self.payjoin_proposal.get_fee():
+            return False
+        """
+        for i, txin in enumerate(self.tx.inputs()):
+            if self.pj_proposal._inputs[i].prevout.to_str() != txin.prevout.to_str():
+                raise Exception(f"Inputs from the original payjoin missing in payjoin proposal2.")
+            else:
+                print('\n sig \n',txin.to_json())
+                #procedure for parttxin
+                txin.part_sigs = {}
+                txin.script_sig = None
+                txin.witness = None
+                self.pj_proposal._inputs[i] = txin
+                print('\n sig2 \n', txin.to_json())
+
+
+        self.pj_proposal.invalidate_ser_cache()
+        return True
 
 
 def pack_bip32_root_fingerprint_and_int_path(xfp: bytes, path: Sequence[int]) -> bytes:
