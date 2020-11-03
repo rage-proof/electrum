@@ -703,9 +703,13 @@ class Abstract_Wallet(AddressSynchronizer, ABC):
             amount = sum(x.value for x in outputs)
         timestamp = None
         exp = None
+        bip78_payjoin = dict()
         if URI:
             timestamp = URI.get('time')
             exp = URI.get('exp')
+            bip78_payjoin['pj'] = URI.get('pj')
+            bip78_payjoin['pjos'] = URI.get('pjos')
+            
         timestamp = timestamp or int(time.time())
         exp = exp or 0
         invoice = OnchainInvoice(
@@ -718,6 +722,7 @@ class Abstract_Wallet(AddressSynchronizer, ABC):
             exp=exp,
             bip70=None,
             requestor=None,
+            bip78_payjoin=bip78_payjoin,
         )
         return invoice
 
