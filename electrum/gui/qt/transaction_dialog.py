@@ -45,7 +45,8 @@ from electrum.bitcoin import base_encode, NLOCKTIME_BLOCKHEIGHT_MAX
 from electrum.i18n import _
 from electrum.plugin import run_hook
 from electrum import simple_config
-from electrum.transaction import SerializationError, Transaction, PartialTransaction, PartialTxInput, PayjoinTransaction
+from electrum.transaction import (SerializationError, Transaction, PartialTransaction, PartialTxInput, PayjoinTransaction,
+                                  PayJoinProposalValidationException, PayJoinExchangeException)
 from electrum.logging import get_logger
 
 from .util import (MessageBoxMixin, read_QIcon, Buttons, icon_path,
@@ -107,7 +108,7 @@ class BaseTxDialog(QDialog, MessageBoxMixin):
         self.prompt_if_unsaved = prompt_if_unsaved
 
         self.payjoin = PayjoinTransaction(payjoin)
-        print(self.payjoin)#
+        self.payjoin_finished = False
 
         self.saved = False
         self.desc = desc
@@ -211,7 +212,6 @@ class BaseTxDialog(QDialog, MessageBoxMixin):
         # e.g. the FX plugin.  If this happens during or after a long
         # sign operation the signatures are lost.
         self.tx = tx = copy.deepcopy(tx)
-        print('tx-diaog: set_tx', self.tx)#
         try:
             self.tx.deserialize()
         except BaseException as e:
@@ -222,35 +222,50 @@ class BaseTxDialog(QDialog, MessageBoxMixin):
         # note: this might fetch prev txs over the network.
         tx.add_info_from_wallet(self.wallet)
 
+    def do_payjoin(self) -> None:
+        def sign_done(success):
+            self.payjoin_finished = True
+            if self.tx.get_fee_rate() < self.payjoin._minfeerate:
+                self.set_tx(original_tx)
+                _logger.warning("The receiver used a too low fee rate.")
+                self.show_error(
+                    _("Error creating a payjoin") + ":\n" +
+                    _("The receiver used a too low fee rate") + "\n" +
+                    _("Sending the original transaction"))
+            self.update()
+            self.main_window.pop_top_level_window(self)
+            self.do_broadcast()
 
-
-    def do_broadcast(self):
         self.main_window.push_top_level_window(self)
-
-        if self.payjoin_cb.isChecked():
+        original_tx = copy.deepcopy(self.tx)
+        _logger.info(f"Starting Payjoin Session")
+        try:
             self.payjoin.set_tx(self.tx)
-            tx = self.payjoin.do_payjoin()
-            if tx is not None:
-                #self.set_tx(tx)
-                self.tx = copy.deepcopy(tx)
-                print('broadcast1: ', self.tx.to_json())#
-                print('broadcast1: ', self.tx.serialize_as_base64())#
-                self.sign()
-                print('external keyspairs', self.external_keypairs)
-                print('broadcast2: ', self.tx.to_json())#
-                print('broadcast2: ', self.tx.serialize_as_base64())#
-                print('broadcast2: ', self.tx._serialize_as_base64()) #
-                print('broadcast2: ', self.tx.is_complete())  #
-        """
+            self.payjoin.do_payjoin()
+            self.payjoin.payjoin_proposal.add_info_from_wallet(self.wallet)
+            self.payjoin.validate_payjoin_proposal()
+        except (PayJoinProposalValidationException, PayJoinExchangeException) as e:
+            _logger.warning(repr(e))
+            self.payjoin_cb.setChecked(False)
+            self.show_error(_("Error creating a payjoin") + ":\n" + str(e) + "\n" +
+                            _("Sending the original transaction"))
+            self.do_broadcast()
+            return
+        tx = self.payjoin.payjoin_proposal
+        self.set_tx(tx)
+        self.main_window.sign_tx(self.tx, callback=sign_done, external_keypairs=self.external_keypairs)
+
+    def do_broadcast(self) -> None:
+        if self.payjoin_cb.isChecked() and self.payjoin.is_available() and not self.payjoin_finished:
+            self.do_payjoin()
+            return
+        self.main_window.push_top_level_window(self)
         try:
             self.main_window.broadcast_transaction(self.tx)
         finally:
             self.main_window.pop_top_level_window(self)
-        """
         self.saved = True
         self.update()
-
-    
 
     def closeEvent(self, event):
         if (self.prompt_if_unsaved and not self.saved
@@ -686,7 +701,6 @@ class BaseTxDialog(QDialog, MessageBoxMixin):
         self.rbf_label.setVisible(self.finalized)
         self.rbf_cb.setVisible(not self.finalized)
         self.payjoin_cb.setVisible(self.payjoin.is_available())
-        print('pj_available in dialog:', self.payjoin.is_available())#
         self.locktime_final_label.setVisible(self.finalized)
         self.locktime_setter_widget.setVisible(not self.finalized)
 
