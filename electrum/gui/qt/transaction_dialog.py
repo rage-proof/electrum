@@ -241,8 +241,11 @@ class BaseTxDialog(QDialog, MessageBoxMixin):
         _logger.info(f"Starting Payjoin Session")
         try:
             self.payjoin.set_tx(self.tx)
+            print('tx1: ',self.tx.to_json())#
             self.payjoin.do_payjoin()
+            print('tx2: ', self.payjoin.payjoin_proposal.to_json())  #
             self.payjoin.payjoin_proposal.add_info_from_wallet(self.wallet)
+            print('tx3: ', self.payjoin.payjoin_proposal.to_json())  #
             self.payjoin.validate_payjoin_proposal()
         except (PayJoinProposalValidationException, PayJoinExchangeException) as e:
             _logger.warning(repr(e))

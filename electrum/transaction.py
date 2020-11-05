@@ -245,6 +245,11 @@ class TxInput:
         n = vds.read_compact_size()
         return list(vds.read_bytes(vds.read_compact_size()) for i in range(n))
 
+    def is_segwit(self, *, guess_for_address=False) -> bool:
+        if self.witness not in (b'\x00', b'', None):
+            return True
+        return False
+
 
 class BCDataStream(object):
     """Workalike python implementation of Bitcoin's CDataStream class."""
@@ -1349,14 +1354,18 @@ class PartialTxInput(TxInput, PSBTSection):
         return None
 
     def is_complete(self) -> bool:
-        if self.script_sig is not None or self.witness is not None:
+        if self.script_sig is not None and self.witness is not None:
             return True
         if self.is_coinbase_input():
             return True
-        if self.script_sig is not None and not Transaction.is_segwit_input(self):
+        if self.script_sig is not None and not self.is_segwit():
             return True
+        if self.witness is not None and self.is_segwit():
+            return True
+        """
         if self.witness is not None and Transaction.is_segwit_input(self):
             return True
+        """
         signatures = list(self.part_sigs.values())
         s = len(signatures)
         # note: The 'script_type' field is currently only set by the wallet,
@@ -1456,6 +1465,20 @@ class PartialTxInput(TxInput, PSBTSection):
 
             self._is_p2sh_segwit = calc_if_p2sh_segwit_now()
         return self._is_p2sh_segwit
+
+    def is_segwit(self, *, guess_for_address=False) -> bool:
+        if super().is_segwit():
+            return True
+        if self.is_native_segwit() or self.is_p2sh_segwit():
+            return True
+        if self.is_native_segwit() is False and self.is_p2sh_segwit() is False:
+            return False
+        if self.witness_script:
+            return True
+        _type = self.script_type
+        if _type == 'address' and guess_for_address:
+            _type = Transaction.guess_txintype_from_address(self.address)
+        return is_segwit_script_type(_type)
 
     def already_has_some_signatures(self) -> bool:
         """Returns whether progress has been made towards completing this input."""
@@ -1797,6 +1820,12 @@ class PartialTransaction(Transaction):
             return self.input_value() - self.output_value()
         except MissingTxInputAmount:
             return None
+
+    def get_fee_rate(self) -> Optional[int]:
+        if self.get_fee() is None:
+            return None
+        return self.get_fee() / self.estimated_size()
+
 
     def serialize_preimage(self, txin_index: int, *,
                            bip143_shared_txdigest_fields: BIP143SharedTxDigestFields = None) -> str:
